@@ -3,16 +3,18 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module HakyllBibTex
     ( BibEntry (..)
-    , bibEntryCompiler
     , bibEntryContext
     , BibFile (..)
+    , bibFileEntryNames
+    , bibFileCompiler
+    , parseBibFile
+    , lookupBibEntry
     ) where
 
 
 --------------------------------------------------------------------------------
 import           Control.Applicative (empty, (<$>), (<*>))
 import           Data.Binary         (Binary (..))
-import           Data.Functor        ((<$))
 import           Data.Typeable       (Typeable)
 import           Hakyll
 import qualified Text.BibTeX.Entry   as BibTex
@@ -45,17 +47,6 @@ instance Writable BibEntry where
 
 
 --------------------------------------------------------------------------------
-bibEntryCompiler :: Compiler (Item BibEntry)
-bibEntryCompiler = do
-    item <- getResourceString
-    let source = toFilePath $ itemIdentifier item
-    case Parsec.parse BibTex.Parse.file source (itemBody item) of
-        Left err  -> fail $ show err
-        Right [x] -> return $ BibEntry (BibTex.lowerCaseFieldNames x) <$ item
-        Right _   -> fail "Need exactly one bib entry per file"
-
-
---------------------------------------------------------------------------------
 bibEntryContext :: Context BibEntry
 bibEntryContext = Context $ \key item ->
     let BibEntry t = itemBody item
@@ -85,3 +76,28 @@ instance Writable BibFile where
         let BibFile entries = itemBody item
         in writeFile fp $ concat
             [BibTex.Format.entry entry | BibEntry entry <- entries]
+
+
+--------------------------------------------------------------------------------
+bibFileEntryNames :: BibFile -> [String]
+bibFileEntryNames (BibFile es) = [BibTex.identifier t | BibEntry t <- es]
+
+
+--------------------------------------------------------------------------------
+bibFileCompiler :: Compiler (Item BibFile)
+bibFileCompiler = fmap parseBibFile <$> getResourceString
+
+
+--------------------------------------------------------------------------------
+parseBibFile :: String -> BibFile
+parseBibFile string = case Parsec.parse BibTex.Parse.file "<bib file>" string of
+    Left err -> error $ show err
+    Right xs -> BibFile $ map (BibEntry . BibTex.lowerCaseFieldNames) xs
+
+
+--------------------------------------------------------------------------------
+lookupBibEntry :: String -> BibFile -> BibEntry
+lookupBibEntry name (BibFile es) =
+    case [BibEntry t | BibEntry t <- es, BibTex.identifier t == name] of
+        []      -> error $ name ++ " not found in BibFile"
+        (x : _) -> x
